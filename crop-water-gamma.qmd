@@ -1,0 +1,364 @@
+---
+title: "How Crop Type and Climate Zone Influence Agricultural Water Use in California"
+date: "2025-12-04"
+format:
+  html:
+    code-fold: false
+execute:
+  echo: true
+  warning: false
+  message: false
+editor_options: 
+  chunk_output_type: inline
+---
+
+## About
+
+#### Dataset Description
+
+California produces a large portion of the nation's fruits, nuts, and vegetables. Irrigated agriculture dominates water use in the state, and the amount of water applied varies by crop type, hydrologic region, and year.[^1]
+
+[^1]: California Department of Food and Agriculture. (2024). *California agricultural production statistics* \[web page\]. Available: https://www.cdfa.ca.gov/statistics. \[Accessed: Dec. 4, 2025\]
+
+This dataset provides annual estimates of:
+
+-   Applied Water per Acre
+-   Hydrologic Regions
+-   20 Crop Categories
+-   Years 2016 - 2020
+
+In this blog post, we would like to dive in to understand how climate region, crop type, and year would influence our Gamma response variable, *applied water per acre*.
+
+#### Data Access
+
+California Department of Water Sources - [*Statewide Agricultural Land & Water Use (2016 -2020)*](https://data.ca.gov/dataset/statewide-agricultural-water-use-data-2016-2020)
+
+## Clear the Environment and Load Libraries
+
+```{r}
+#| label: setup
+#| message: false
+#| warning: false
+
+# Clear the environment
+rm(list = ls())
+
+# Load in libraries
+pacman::p_load(tidyverse, dplyr, here, readxl, pals, broom, knitr,
+               janitor, dagitty, ggdag, ggplot2, kableExtra)
+```
+
+## Load and Explore Data
+
+In this section, we load the raw Excel file and prepare it for analysis. Real datasets often contain unnecessary columns, inconsistent variable names, or values that must be converted into usable formats. We use functions like `clean_names()`, `select()`, and `pivot_longer()` to transform the data into a tidy structure, where each row corresponds to a single crop-year-region combination. Finally, we filter out *missing or zero values* so the Gamma model, which requires positive continuous outcomes, can be correctly fit.
+
+```{r}
+#| label: read-clean-data
+#| message: false
+#| warning: false
+
+# Read in data and clean the name to snake case and drop unused columns
+water_raw <- read_excel(here("data",
+                  "agricultural_water_use_data_2016_2020.xlsx"),
+             sheet = "Statewide_AW_Unit", skip = 1) %>% 
+  clean_names() %>% 
+  select(!starts_with("x"))
+
+# Pivot all crop columns, convert variable types, and drop missing rows
+water_long <- water_raw %>% 
+  pivot_longer(cols = -c(year, hr),
+               names_to = "crop",
+               values_to = "aw_per_acre") %>% 
+  mutate(aw_per_acre = as.numeric(aw_per_acre),
+         year = as.integer(year),
+         hr = as.factor(hr),
+         crop = as.factor(crop)) %>% 
+  filter(!is.na(aw_per_acre),
+         aw_per_acre > 0)
+```
+
+## Exploratory Visualization
+
+Before fitting any statistical model, it is essential to understand the distribution of the variables. The violin plot visualizes how applied water per acre varies across crop types and reveals skewness, outliers, and general patterns. This helps justify the modeling choices and provides intuition about which predictors might influence water use.
+
+```{r}
+#| label: plot-to-check
+#| fig-cap: "Distribution of applied water per acre across crop types, using violin + boxplot to visualize skewness and variability."
+#| message: false
+#| warning: false
+
+# Create a consistent color palette for crop types
+crop_cols <- setNames(alphabet()[1:length(levels(water_long$crop))], 
+                      levels(water_long$crop))
+
+water_long %>%
+ggplot(aes(x = crop, y = aw_per_acre, fill = crop)) +
+  geom_violin(trim = FALSE, alpha = 0.7) +
+  geom_boxplot(width = 0.1, outlier.shape = NA, alpha = 0.5) +
+  scale_fill_manual(values = crop_cols) +
+  coord_flip() +
+  theme_bw() +
+  theme(legend.position = "none",
+        plot.title = element_text(size = 14, face = "bold", hjust = 0),
+        axis.title.y = element_blank()) +
+  labs(y = "Applied Water per Acre")
+```
+
+## DAG (Directed Acyclic Graph)
+
+A Directed Acyclic Graph clarifies our assumptions about how variables influence each other. Let's dive into our variables:
+
+-   Crop Types influence water use because different crops require different irrigation levels
+
+-   The hydrologic region affects crop type because different regions have different crops
+
+-   Both year and hydrologic influence applied water per acre due to climate and resource availability
+
+These relationships reflect scientific justification, including crop, hydrological region, and predictors in the regression model.
+
+```{r}
+#| label: casual-dag
+#| fig-cap: "DAG representing hypothesized causal relationships among crop type, hydrologic region, year, and applied water per acre."
+#| code-fold: true
+#| message: false
+#| warning: false
+
+# Draw a DAG
+water_dag <- dagitty("dag {
+               hr -> crop
+               hr -> aw_per_acre
+               year -> crop
+               year -> aw_per_acre
+               crop -> aw_per_acre}")
+
+# Assign coordinate for each variable nodes
+coordinates(water_dag) <- list(
+  x = c(hr = 0, year = 2, crop = 1, aw_per_acre = 3),
+  y = c(hr = 2, year = 2, crop = 1, aw_per_acre = 1))
+
+# Assign color for the nodes
+node_colors <- c(hr = "#7F95D1", year = "#FF82A9", 
+                 crop = "#FA824C", aw_per_acre = "#1B998B")
+
+# Plot DAG
+ggdag(water_dag, text = FALSE, node = FALSE) +
+  geom_dag_node(aes(fill = name), size = 12, shape = 21, color = "white") +
+  geom_dag_edges() +
+  scale_fill_manual(values = node_colors, name = "Variables",
+                    labels = c(aw_per_acre = "Applied Water per Acre",
+                               crop = "Crop Type",
+                               hr = "Hydrologic Region",
+                               year = "Year")) +
+  theme_minimal() +
+  theme(legend.title = element_text(size = 15, face = "bold", hjust = 0.5),
+        legend.position = "right",
+        legend.text = element_text(size = 12, face = "bold"),
+        axis.title = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        panel.grid = element_blank(),
+        panel.background = element_blank(),
+        plot.margin = margin(10, 10, 10, 10))
+```
+
+The DAG summarizes our assumptions about how crop type, hydrologic region, and year influence applied water per acre. Hydrologic region influences crop type because certain crops grow better in specific climates and soils. Both hydrologic region and year influences the response variable due to variation in precipitation, groundwater availability, and climate condition. Year affects crop distribution annually as they response directly to the market and climate.
+
+## Statistical Modeling
+
+#### Why Gamma?
+
+The Gamma Distribution with a log link works best with this data because the applied water per acre is positive and continuous. A positive continuous variable is a numerical value that can take *any real number* that is greater than *zero*.
+
+The distribution is right-skewed, meaning most values are small, and a few very extreme values stretch the tail to the right, causing the data to cluster near the lower end and occasional extreme values that create an asymmetrical shape with a long right tail. Also, because it can only be positive.
+
+A multiplicative effect shows scientific results that change the outcome in proportion to the change. Rather than adding or subtracting a fixed amount, we can view the numbers as a percentage difference or twice as large. Multiplying the response is more meaningful than adding a constant amount, which makes the Gamma model fit right in.
+
+#### Gamma Model in Statistical Notation
+
+The mathematical form of the model explains this notation:
+
+$$
+{Applied~Water} \sim Gamma(\mu, \phi) \\\\ 
+log(\mu) = \beta_0 + \beta_1 * (Crop) + \beta_2 * (Hydrologic~Region) + \beta_3 *(Year)
+$$ The linear predictor for the mean is on the log scale, and the parameter of Gamma consists of the following:
+
+-   $\mu$ is expected applied water per acre
+
+-   $\phi$ is shape parameter and it controls with its size.
+
+    -   Larger $\phi$ - distribution becomes more symmetric
+
+    -   Smaller $\phi$ - distribution becomes more right-skewed and more spread out
+
+#### Fit Model to Simulated Data
+
+To demonstrate how the Gamma model works under the known parameters, we simulated 200 observations from a Gamma distribution with a log-linear mean structure. We set the $\beta_0 = 1$ and a slope $\beta_1 = -0.4$.
+
+```{r}
+#| label: simulate-data
+#| message: false
+#| warning: false
+
+# Initialize simulated random data
+set.seed(123)
+n <- 200 # Sample Size
+beta0 <- 1 # Intercept
+beta1 <- -0.4 # Slope, controls strength and direction
+phi <- 4 # Gamma Shape
+
+# Simulated a positive and right-skewed predictor
+predictor <- rgamma(n, shape = 2, scale = 1)
+
+# Simulated Gamma-distribute response with mean
+response <- rgamma(n, shape = phi, 
+                   scale = exp(beta0 + beta1 * predictor) / phi) 
+
+sim_data <- tibble(predictor, response)
+
+sim_model <- glm(response ~ predictor,
+                 data = sim_data,
+                 family = Gamma(link = "log"))
+
+sim_results <- tidy(sim_model, conf.int = TRUE)
+
+sim_results %>%
+  kbl(digits = 3, 
+      caption = "Gamma Regression Coefficients from Simulated Data (with 95% CI)",
+      col.names = c("Term", "Estimate", "Std. Error",
+                    "Statistic", "p-value",
+                    "CI Lower", "CI Upper")) %>%
+kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+              full_width = FALSE, position = "center") %>%
+  row_spec(0, bold = TRUE, background = "#f0f0f0")
+```
+
+#### Parameter Recovery for Simulated Data
+
+During the simulation, the true parameters were:
+
+-   Intercepts: $\beta_0 = 1$
+-   Slope: $\beta_1 = -0.4$
+
+The fitted Gamma regression model estimated coefficients very close to the true values we selected. The intercept estimate is approximately 1, and the slope estimate is approximately -0.4, indicating that the Gamma model with a log link successfully recovers the underlying parameters when the model assumptions hold. The simulation validates that the Gamma model applies to the water data.
+
+```{r}
+#| label: simulate-plot
+#| fig-cap: "Simulated Gamma-distributed response data with a log-linear relationship."
+#| message: false
+#| warning: false
+
+# Plot the simulated data
+ggplot(sim_data, aes(predictor, response)) +
+  geom_point(alpha = 0.75) +
+  labs(x = "Predictor", y = "Response") +
+  theme(plot.title = element_text(size = 14, face = "bold", hjust = 0.5))
+```
+
+```{r}
+#| label: simulate-estimate
+#| fig-cap: "Simulated Data with Fitted Gamma Regression Line"
+#| message: false
+#| warning: false
+ggplot(sim_data, aes(x = predictor, y = response)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "glm",
+              method.args = list(family = Gamma(link = "log")),
+              se = TRUE, color = "red", fill = "lightblue", size = 1.1) +
+  theme_bw() +
+  labs(x = "Predictor", y = "Response")
+```
+
+## Fit to Real Life Data
+
+```{r}
+#| label: model-fit
+#| code-fold: true
+#| message: false
+#| warning: false
+
+# Fit Gamma Regression using log link to model applied water per acre
+water_gamma_model <- glm(aw_per_acre ~ crop + hr + year,
+           family = Gamma(link = "log"),
+           data = water_long)
+
+# Make the table presentable
+water_results <- tidy(water_gamma_model, conf.int = TRUE) %>%
+  mutate(term = gsub("crop", "Crop: ", term),
+         term = gsub("hr", "Region: ", term)) %>%
+  kable(format = "html",
+        caption = "Gamma Regression Coefficients with 95% Confidence Intervals",
+        col.names = c("Term", "Estimate", "Std. Error", "Statistic", "p-value",
+                      "CI (Lower)", "CI (Upper)"), digits = 3) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = FALSE, position = "center") %>%
+  row_spec(0, bold = TRUE, background = "#f0f0f0")
+
+# Show table
+water_results
+```
+
+#### Coefficient Plot
+
+```{r}
+#| label: coef-plot-hr
+#| fig-cap: "Hydrologic Region Effects with fitted Gamma regression line and 95% confidence interval"
+#| message: false
+#| warning: false
+
+tidy(water_gamma_model, conf.int = TRUE) %>%
+  filter(grepl("^hr", term)) %>%
+  mutate(term = gsub("hr", "Region ", term), 
+         term = reorder(term, estimate)) %>%
+  ggplot(aes(x = term, y = estimate)) +
+  geom_point(size = 2) +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.15) +
+  coord_flip() +
+  theme_bw() +
+  labs(x = "Hydrologic Region", y = "Estimate (log scale)")
+```
+
+## Inference
+
+We are interested in if hydrologic region is associated with differences in applied water per acre, after adding all consideration for crop types and year.
+
+#### Explain Hypothesis in Plain-Language
+
+Some hydrologic regions require more applied water per acre than others, even after adjusting for crop type and year.
+
+#### Hypothesis
+
+$$
+H_0: \beta_r = 0 \quad \text{(no difference in expected water use)} \\
+H_A: \beta_r \neq 0 \quad \text{(a region differs from the baseline region)}
+$$
+
+#### Visualizing Hypothesis
+
+```{r}
+#| label: region-boxplot
+#| fig-cap: "Distribution of applied water per acre across hydrologic regions."
+#| message: false
+#| warning: false
+
+# Plot 
+water_long %>%
+  ggplot(aes(x = hr, y = aw_per_acre)) +
+  geom_boxplot(fill = "#7F95D1") +
+  labs(title = "Applied Water per Acre by Hydrologic Region",
+       x = "Hydrologic Region",
+       y = "Applied Water per Acre") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1,size = 10))
+```
+
+## Conclusion
+
+The box plot of applied water per acre by hydrologic region shows that the Colorado River and South Lahontan regions have the highest median water use. In contrast, regions such as San Francisco and the Central Coast show noticeably low levels. These figures align with the coefficient plot from the Gamma regression model. The hydrologic region is an essential predictor of applied water per acre, even without accounting for other factors.
+
+## Reference
+
+California Department of Food and Agriculture. (2024). *California agricultural production statistics* \[web page\]. Available: https://www.cdfa.ca.gov/statistics. \[Accessed: Dec. 4, 2025\]
+
+California Department of Water Resources. (2020). *Statewide Agricultural Water Use Data, 2016–2020* \[data file\]. Available: https://data.ca.gov/dataset/statewide-agricultural-water-use-data-2016-2020. \[Accessed: Dec. 4, 2025\]
+
+Wikimedia Commons. (2024). *Sisteme-de-irigatie.jpg* \[image file\]. Available: https://commons.wikimedia.org/w/index.php?title=File:Sisteme-de-irigatie.jpg&oldid=838313884. \[Accessed: Dec. 4, 2025\]
