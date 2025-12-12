@@ -2,6 +2,8 @@
 
 ### Gamma Regression Modeling Across Hydrologic Regions (2016 - 2020)
 
+![water](https://github.com/user-attachments/assets/9783f3b0-b3b4-47ed-80ed-02d7742d7bcc)
+
 ## About This Repository
 
 This repository contains the analysis for a statistical modeling project that examines how crop type, hydrologic region, and year influence *applied water per acre* in California. The project includes:
@@ -12,16 +14,17 @@ This repository contains the analysis for a statistical modeling project that ex
 
 -   A directed acyclic graph (DAG) describing hypothesized causal relationships
 
--   Gamma generalized linear modeling (GLM) to quantify the effects of climate region and crop selection on agriculture water use
+-   Gamma generalized linear modeling (GLM) to quantify the effects of climate region and crop selection on agricultural water use
 
 -   Simulate data to demonstrate model assumptions
 
-The goal is to understand which factors drive differences in irrigation across California and apply gamma model to applied water requirements with a positive continuous response.
+The goal is to identify the factors that drive differences in irrigation across California and to apply the gamma model to water requirements, yielding a positive, continuous response.
 
 ## Repository Structure
 
 ``` bash
 crop-water-gamma
+├── .gitignore
 ├── crop-water-gamma.qmd
 ├── crop-water-gamma.Rproj
 ├── data
@@ -39,7 +42,7 @@ The Statewide Agricultural Water Use Dataset (WY 2016–2020) provides statewide
 
 ## Authorship
 
-This repository was created for the following course: EDS 222 - Statistics for Environmental Data Science University of California, Santa Barbara
+This repository was created for the following course: EDS 222 - Statistics for Environmental Data Science, University of California, Santa Barbara.
 
 **Project Author**: Jay Kim
 
